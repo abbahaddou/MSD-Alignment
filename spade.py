@@ -26,37 +26,17 @@ import time
 import torch
 
 def compute_knn_graph(features: torch.Tensor, k: int = 5) -> torch.Tensor:
-    """
-    Constructs a k-NN graph adjacency matrix efficiently.
-    Uses torch.cdist to avoid OOM errors on large graphs.
-    """
-    # 1. Compute pairwise distance efficiently
-    # torch.cdist computes the L2 distance (Euclidean)
+
     # Memory complexity: O(N^2) instead of O(N^2 * d)
     dist = torch.cdist(features, features, p=2)
-    
-    # We square it to match the standard ||x - y||^2 metric usually expected
     dist_sq = dist.pow(2)
-    
-    # 2. Get k-Nearest Neighbors
-    # We select k+1 because the closest neighbor is the node itself (dist=0)
-    # largest=False finds the smallest distances
-    _, indices = dist_sq.topk(k + 1, largest=False, sorted=True)
 
-    # 3. Construct Adjacency Matrix W
+    _, indices = dist_sq.topk(k + 1, largest=False, sorted=True)
     N = features.size(0)
-    
-    # Remove the first column (self-loops)
     neighbor_indices = indices[:, 1:]
-    
-    # Create row indices efficiently
     row_indices = torch.arange(N, device=features.device).unsqueeze(1).expand(-1, k)
-    
-    # Initialize sparse-like adjacency (dense tensor for now)
     W = torch.zeros((N, N), device=features.device)
     W[row_indices, neighbor_indices] = 1.0
-    
-    # Symmetrize (Critical for valid spectral analysis)
     W = torch.max(W, W.t())
     
     return W
@@ -65,7 +45,7 @@ def compute_knn_graph(features: torch.Tensor, k: int = 5) -> torch.Tensor:
 def compute_normalized_laplacian(W: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     """
     Computes L_sym = I - D^-1/2 W D^-1/2. 
-    Normalized Laplacians are more stable for spectral comparison[cite: 290].
+    Normalized Laplacians are more stable for spectral comparison.
     """
     N = W.size(0)
     d = W.sum(dim=1)
@@ -75,21 +55,12 @@ def compute_normalized_laplacian(W: torch.Tensor, eps: float = 1e-8) -> torch.Te
     L_norm = torch.eye(N, device=W.device) - D_inv_sqrt @ W @ D_inv_sqrt
     return L_norm
 
-def spade_score(X: torch.Tensor, SX: torch.Tensor, k: int = 5, reg: float = 1e-3) -> float:
-    """
-    Computes Adapted SPADE Score using Normalized Laplacians and Mean Distortion.
-    """
-    # 1. Construct Graphs
+def spade_score(X: torch.Tensor, SX: torch.Tensor, k: int = 5, reg: float = 1e-3) :
     W_X = compute_knn_graph(X, k=k)
     W_SX = compute_knn_graph(SX, k=k)
-    
-    # 2. Compute Normalized Laplacians for stability [cite: 290]
     L_X = compute_normalized_laplacian(W_X)
     L_SX = compute_normalized_laplacian(W_SX)
-    
-    # 3. Robust Generalized Eigenvalue Handling
     N = X.size(0)
-    # Use a larger, more robust regularization for the denominator matrix 
     L_X_reg = L_X + reg * torch.eye(N, device=X.device)
     
     try:
@@ -103,15 +74,12 @@ def spade_score(X: torch.Tensor, SX: torch.Tensor, k: int = 5, reg: float = 1e-3
         # Approximate whitening using sqrt of pinv
         S = L_X_inv @ L_SX 
 
-    # 4. Compute Eigenvalues
     # We use eigvals (non-symmetric solver) as fallback if S isn't perfectly symmetric
     try:
         eigenvalues = torch.linalg.eigvalsh(S)
     except RuntimeError:
         eigenvalues = torch.linalg.eigvals(S).real
 
-    # ADAPTATION: Return the mean of top eigenvalues (Average Distortion)
-    # This correlates better with accuracy than the maximum.
     return eigenvalues.mean().item()
 
 
@@ -155,10 +123,6 @@ edge_index_without_loops = edge_index_without_loops.to(features.device)
 row, col = edge_index_without_loops
 deg = degree(col, n, dtype=features.dtype)
 diags = deg
-
-
-
-    # Now that we have computed the centralities without self loops, we add self loops in the edge index
 
 edge_index, edge_weight = from_scipy_sparse_matrix(adj)
 edge_index = edge_index.to(features.device)
